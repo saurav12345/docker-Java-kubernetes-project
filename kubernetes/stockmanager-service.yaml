@@ -6,7 +6,7 @@ metadata:
   labels:
     app: stockmanager
 spec:
-  type: NodePort
+  type: LoadBalancer
   selector:
     app: stockmanager
   ports:
@@ -32,7 +32,7 @@ spec:
     spec:
       containers:
       - name: stockmanager
-        image: thetips4you/stockmanager:latest
+        image: jenkinsserver.azurecr.io/stockmanager:latest
         ports:
         - containerPort: 8030
         livenessProbe:
