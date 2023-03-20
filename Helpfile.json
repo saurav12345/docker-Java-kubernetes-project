@@ -1,3 +1,4 @@
+## Source https://github.com/RekhuGopal/PythonHacks/blob/main/DeployFullStackApp_On_AKS/
 ## Az login to azure account.
 az login --use-device-code
 
