@@ -6,12 +6,13 @@ metadata:
   labels:
     app: productcatalogue
 spec:
-  type: LoadBalancer
+  #type: LoadBalancer
   selector:
     app: productcatalogue
   ports:
   - protocol: TCP
     port: 8020
+    #targetPort: 8020
     name: http
 
 ---
