@@ -1,0 +1,428 @@
+Jenkins Installation Steps:
+
+Follow the documentation to setup Jenkins: https://www.digitalocean.com/community/tutorials/how-to-install-jenkins-on-ubuntu-22-04
+
+Docker Installation Steps:
+
+Follow the documentation to setup Docker: https://www.digitalocean.com/community/tutorials/how-to-install-and-use-docker-on-ubuntu-20-04
+
+ACR Setup:
+
+1.	Create an ACR in your azure resource group
+2.	Go to Access Keys and Enable the Admin User: Then you’ll get the username and password
+3.	Run below command to allow anonymous pull from your ACR - az acr update --name myregistry --anonymous-pull-enabled
+
+Setup AZ cli on VM
+
+Using AZ CLI login to your azure subscription: az login
+Then push your docker image like: docker push jenkinsserver.azurecr.io/productcatalouge:latest
+
+Github Repo: https://github.com/saurav12345/docker-Java-kubernetes-project/
+
+Setup git locally to connect to your remote repo and pull and push code
+
+Below steps should be followed when trying to setup git locally and to tackle issues if any –
+git config --global user.email "kumar.saurav92@gmail.com"
+git config --global user.name "saurav12345"
+
+add ssh key
+provide pat in place of password after words
+
+it may still keep asking for git username and password for either pull/push or for both
+
+use below command to resolve this -
+
+git config credential.helper 'cache --timeout=3600000'
+
+Setup github webhook:
+1.	Go to your github repo
+2.	Click on settings
+3.	Under Code and Automation Section (in the left hand side, below general section) -> click on webhooks
+4.	Click on Add webhook and provide the url in the below format: https://3a05-4-224-83-84.in.ngrok.io/github-webhook/ 
+Note: I was facing some issue when trying to directly add the Jenkins url as http://4.224.83.84:8080/github-webhook/ 
+The webhook was not getting verified. Then tried after installing ngrok on the Jenkins vm and passing ngrok url to the github webhook, it got verified.
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------ 
+ 
+Ngrok setup:
+Snap install ngrok
+Unzip /path/to/ngrok.zip
+Then login to ngrok website (https://dashboard.ngrok.com/signup) and get the authentication token 
+And paste in your vm where you want to use ngrok as below –
+Ngrok config add-authtoken 1bUCcEAG9keTFPF0wc7ESy05QGh_6qqekvkyZgEuvVu4QktHR
+Then run below command to tunnel traffic through ngrok –
+Ngrok http 8080 (8080 is the port number at which Jenkins is running)
+ 
+ 
+Setup AKS cluster in your resource group: I took 1 node cluster
+Get the kube config file for your cluster using below command –
+az aks get-credentials -g Demo -n JavaAKS –admin
+ 
+Cat to above location: /home/Saurav/.kube/config. Copy the content, then place it on your VM in .kube/config file.
+Kubectl installation on VM:
+Follow given documentation to install kubectl on ubuntu - https://kubernetes.io/docs/tasks/tools/install-kubectl-linux/
+Once kubectl is installed, try running kubectl get nodes
+
+
+
+
+
+
+
+------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+Jenkins Pipeline Script:
+pipeline {
+    agent any
+    tools {
+        maven "Maven3"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scmGit(branches: [[name: '*/main']], extensions: [], userRemoteConfigs: [[url: 'https://github.com/saurav12345/docker-Java-kubernetes-project']])
+            }
+        }
+        
+        stage ("SonarQube Analysis") { 
+            steps {
+            //def mvn = tool 'Default Maven'; 
+            withSonarQubeEnv('My SonarQube Scanner') { 
+                sh "cd ./productcatalogue && mvn clean verify sonar:sonar -Dsonar.projectKey=productcatalouge" 
+                } 
+            }
+        } 
+        
+        
+
+
+
+stage("Quality Gate") {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
+                    // true = set pipeline to UNSTABLE, false = don't
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        
+        stage('App Build') {
+            steps {
+                sh "cd ./productcatalogue && mvn clean install"
+            }
+        }
+        
+        stage('Build Image') {
+            steps {
+                    sh 'cd ./productcatalogue && docker image build -t jenkinsserver.azurecr.io/productcatalouge:latest .'
+            }   
+        }
+        
+        
+
+
+
+
+
+stage('ACR Push') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'ACR', passwordVariable: 'password', usernameVariable: 'username')]) {
+                    sh 'docker login -u ${username} -p ${password} jenkinsserver.azurecr.io'
+                    sh "docker image push jenkinsserver.azurecr.io/productcatalouge:latest"   
+                }
+            }
+        }
+            
+        stage('Deploy To AKS') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'AKS', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                    sh 'cd ./kubernetes && kubectl apply -f productcatalogue-service.yaml'
+                }
+            }
+        }
+        
+        stage ("SonarQube Analysis1") { 
+            steps {
+            //def mvn = tool 'Default Maven'; 
+            withSonarQubeEnv('My SonarQube Scanner') { 
+                sh "cd ./shopfront && mvn clean verify sonar:sonar -Dsonar.projectKey=shopfront" 
+                } 
+            }
+        } 
+        
+        
+stage("Quality Gate1") {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
+                    // true = set pipeline to UNSTABLE, false = don't
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        
+        
+stage('App Build1') {
+            steps {
+                sh "cd ./shopfront && mvn clean install"
+            }
+        }
+        
+        stage('Build Image1') {
+            steps {
+                    sh 'cd ./shopfront && docker image build -t jenkinsserver.azurecr.io/shopfront:latest .'
+            }   
+        }
+        
+        
+
+
+
+
+
+stage('ACR Push1') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'ACR', passwordVariable: 'password', usernameVariable: 'username')]) {
+                    sh 'docker login -u ${username} -p ${password} jenkinsserver.azurecr.io'
+                    sh "docker image push jenkinsserver.azurecr.io/shopfront:latest"   
+                }
+            }
+        }
+        
+        stage('Deploy To AKS1') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'AKS', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                    sh 'cd ./kubernetes && kubectl apply -f shopfront-service.yaml'
+                }
+            }
+        }
+        
+        stage ("SonarQube Analysis2") { 
+            steps {
+            //def mvn = tool 'Default Maven'; 
+            withSonarQubeEnv('My SonarQube Scanner') { 
+                sh "cd ./stockmanager && mvn clean verify sonar:sonar -Dsonar.projectKey=sonarqube_test-project" 
+                } 
+            }
+        } 
+        
+        
+stage("Quality Gate2") {
+            steps {
+                timeout(time: 1, unit: 'HOURS') {
+                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
+                    // true = set pipeline to UNSTABLE, false = don't
+                    waitForQualityGate abortPipeline: true
+                }
+            }
+        }
+        
+        stage('App Build2') {
+            steps {
+                sh "cd ./stockmanager && mvn clean install"
+            }
+        }
+        
+        stage('Build Image2') {
+            steps {
+                    sh 'cd ./stockmanager && docker image build -t jenkinsserver.azurecr.io/stockmanager:latest .'
+            }   
+        }
+        
+        
+
+
+
+
+
+stage('ACR Push2') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'ACR', passwordVariable: 'password', usernameVariable: 'username')]) {
+                    sh 'docker login -u ${username} -p ${password} jenkinsserver.azurecr.io'
+                    sh "docker image push jenkinsserver.azurecr.io/stockmanager:latest"   
+                }
+            }
+        }
+        
+        stage('Deploy To AKS2') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'AKS', namespace: '', restrictKubeConfigAccess: false, serverUrl: '') {
+                    sh 'cd ./kubernetes && kubectl apply -f stockmanager-service.yaml'
+                }
+            }
+        }
+    }
+}
+ 
+Jenkins Pipeline Settings:
+Check below items and provide values accordingly -
+1.	 GitHub project -> Provide Project URL: https://github.com/saurav12345/docker-Java-kubernetes-project/
+2.	Build Triggers -> GitHub hook trigger for GITScm polling – add githubwebhook on github
+3.	Trigger builds remotely (e.g., from scripts) – add sonar token
+4.	Pipeline -> Use Groovy Sandbox
+
+Manage Jenkins:
+
+1.	Configure System:
+
+Add Info for SonarQube servers
+ 
+
+2.	Global Tool Configuration:
+Add Maven
+ 
+
+Add SonarQube Scanner:
+ 
+
+3.	Plugin Manager:
+Add plugins for Azure, docker, Kubernetes and SonarQube
+4.	Manage Credentials:
+1.	Add ACR credential
+ 
+
+2.	Add AKS Credential:
+ 
+
+
+
+
+
+-------------------------------------------------------------------------------------------------------------------------------------------------------
+
+
+
+
+
+
+
+3.	Add Sonar Credential:
+ 
+ 
+SonarQube Setup:
+Run given docker command to start sonarqube in a docker container - docker run -d -v sonarqube:/opt/sonarqube -p 9000:9000 sonarqube:lts
+
+Then you need to first add sonarqube port in vm’s networking -> inbound port rules and select source as “Any”.
+ 
+Now try visiting the sonarqube url: vm’s ip:9000 (In my case it is:  http://4.224.83.84:9000)
+ 
+Login with default username and password: admin and password
+Go to projects -> create project (select manually) -> provide some meaningful name and project key and click on set up.
+ 
+Click on with Jenkins.
+ 
+Now select github option.
+ 
+Click on configure analysis.
+ 
+Click on continue.
+ 
+Click on continue again in the second step, because we are interested in the 3rd step: Create a Jenkinsfile.
+Select Maven, because we have configured maven to build our java application in Jenkins.
+ 
+Copy the code given below and paste this in your jenkinsfile under sonarqube stage.
+ 
+Here is the code below for first_project:
+  stage('SonarQube Analysis') {
+    //def mvn = tool 'Default Maven';
+    withSonarQubeEnv() {
+      sh "${mvn}/bin/mvn clean verify sonar:sonar -Dsonar.projectKey=first_project"
+    }
+  }
+
+Here’s how it looks in our jenkinsfile:
+
+stage ("SonarQube Analysis") { 
+            steps {
+            //def mvn = tool 'Default Maven'; 
+            withSonarQubeEnv('My SonarQube Scanner') { 
+                sh "cd ./productcatalogue && mvn clean verify sonar:sonar -Dsonar.projectKey=productcatalouge" 
+                } 
+            }
+        }
+ 
+When all your stages are complete the running the jenkns pipeline will result something like this in the sonarqube.
+ 
+All the app related code is there on github.
+Plus the modified kubernetes services code is also there to be run with an nginx ingress controller (file name is ingress-bkp.yaml)
+ 
+Helm installation:
+curl https://baltocdn.com/helm/signing.asc | gpg --dearmor | sudo tee /usr/share/keyrings/helm.gpg > /dev/null
+
+sudo apt-get install apt-transport-https --yes
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/helm.gpg] https://baltocdn.com/helm/stable/debian/ all main" | sudo tee /etc/apt/sources.list.d/helm-stable-debian.list
+
+sudo apt-get update
+ 
+sudo apt-get install helm
+
+Prometheus Setup:
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+helm search repo prometheus
+
+helm repo update
+
+helm install prometheus prometheus-community/prometheus
+
+Now fire - kubectl get all
+
+Now in order to expose the prometheus service outside the cluster - create a new service using below command:
+
+kubectl expose service prometheus-server --type=NodePort --target-port=9090 --name=prometheus-server-ext1
+ 
+Grafana Setup:
+helm repo add grafana https://grafana.github.io/helm-charts
+
+helm repo update
+
+helm install grafana stable/Grafana
+Expose Grafana similar to Prometheus.
+Username for Grafana: admin and password in my case is: mVxoSOMklML29hPyBRjnDLJ8Obp6zjpS9v2ate8i
+Use below command to get this: 
+kubectl get secret grafana -o jsonpath="{.data.admin-password}" | base64 --decode ; echo
+ 
+ 
+Login to Grafana.
+
+Click on add your first data source.
+ 
+Select Prometheus.
+ 
+Put Prometheus url (Under HTTP section in URL portion of it).
+ 
+Scroll the page to bottom and click on “save & test”.
+ 
+ 
+Select dashboards -> import -> load 6417.
+ 
+ 
+Scroll the page to bottom and select the Prometheus data source that we created above (In our case it was Prometheus-1.
+ 
+Click on import.
+ 
+ 
+ 
+Nginx controller setup:
+wget https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.2.0/deploy/static/provider/cloud/deploy.yaml
+kubectl apply -f deploy.yaml
+kubectl get all -n ingress-nginx
+ 
+ 
+Path of files to modified for demo:
+
+docker-Java-kubernetes-project/shopfront/src/main/resources/templates/index.html
+
+docker-Java-kubernetes-project/productcatalogue/src/main/java/uk/co/danielbryant/djshopping/productcatalogue/services/ProductService.java
+
+docker-Java-kubernetes-project/stockmanager/src/main/java/uk/co/danielbryant/djshopping/stockmanager/config/DataGenerator.java
+
